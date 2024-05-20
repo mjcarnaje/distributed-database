@@ -33,6 +33,7 @@ def insert_data(value):
     key = config['next_key']
     next_bucket = config['next_bucket']
     comm.send({'action': 'insert', 'key': key, 'value': value}, dest=next_bucket)
+    print(f"[INSERT] Data with key {key} has been inserted")
     config['next_bucket'] = (next_bucket % (size - 1)) + 1
     config['next_key'] += 1
 
@@ -232,61 +233,110 @@ def rebalance_buckets():
                     valid_operations -= 1
 
     for operation in operations:
-        print(f'[REBALANCE] Donor {operation["donor"]} will donate to {operation["receiver"]}')
         comm.send({'action': 'donate', 'receiver': operation['receiver']}, dest=operation['donor'])
 
 argv = sys.argv
 
+def help():
+    print(f"""
+    You can use the following commands:
+        INSERT_RND <amount> - Insert random data
+        INSERT <value> - Insert data
+        GET <key> - Get data
+        FIND <key> - Find data
+        SET <key> <value> - Set data
+        DELETE <key> - Delete data
+        CLEAR - Clear all data
+    """)
+
+def help_specific(command):
+    help_text = {
+        'INSERT_RND': 'INSERT_RND <amount> - Insert random data',
+        'INSERT': 'INSERT <value> - Insert data',
+        'GET': 'GET <key> - Get data',
+        'FIND': 'FIND <key> - Find data',
+        'SET': 'SET <key> <value> - Set data',
+        'DELETE': 'DELETE <key> - Delete data',
+        'CLEAR': 'CLEAR - Clear all data'
+    }
+    print(f"""
+    [ERROR] Invalid command
+    {help_text[command]}
+    """)
+
 if rank == 0:
-    commands = ['INSERT', 'INSERT_RND', 'GET', 'FIND', 'SET', 'DELETE', 'CLEAR']
+    commands = ['INSERT', 'INSERT_RND', 'GET', 'FIND', 'SET', 'DELETE', 'CLEAR', 'HELP']
 
-    if len(argv) == 1:
-        print(f"Usage: {argv[0]} <command> <args>")
-        print(f"Valid commands are {commands}")
-        comm.Abort()
+    has_error = False
     
-    if len(argv) > 1 and argv[1] == 'CLEAR':
-        for i in range(1, size):
-            if os.path.exists(f"bucket_{i}.txt"):
-                os.remove(f"bucket_{i}.txt")
-        if os.path.exists("config.txt"):
-            os.remove("config.txt")
-        print("[CLEAR] All data has been cleared")
-        comm.Abort()
-
     create_buckets()
 
     if len(argv) > 1:
         operation = argv[1]
         
-        if operation == 'INSERT_RND':
-            amount = int(argv[2])
-            for i in range(amount):
-                insert_data(str(uuid.uuid4()))
+        if operation == 'CLEAR':
+            for i in range(1, size):
+                if os.path.exists(f"bucket_{i}.txt"):
+                    os.remove(f"bucket_{i}.txt")
+            if os.path.exists("config.txt"):
+                os.remove("config.txt")
+            print("[CLEAR] All data has been cleared")
+        elif operation == 'HELP':
+            help()
+        elif operation == 'INSERT_RND':
+            try:
+                amount = int(argv[2])
+                for i in range(amount):
+                    insert_data(str(uuid.uuid4()))
+            except Exception:
+                help_specific('INSERT_RND')
+                has_error = True
         elif operation == 'INSERT':
-            value = argv[2]
-            insert_data(value)
+            try:
+                value = argv[2]
+                insert_data(value)
+            except Exception:
+                help_specific('INSERT')
+                has_error = True
         elif operation == 'GET':
-            key = int(argv[2])
-            get_data(key)
+            try:
+                key = int(argv[2])
+                get_data(key)
+            except Exception:
+                help_specific('GET')
+                has_error = True
         elif operation == 'FIND':
-            key = int(argv[2])
-            find_data(key)
+            try:
+                key = int(argv[2])
+                find_data(key)
+            except Exception:
+                help_specific('FIND')
+                has_error = True
         elif operation == 'SET':
-            key = int(argv[2])
-            value = argv[3]
-            set_data(key, value)
+            try:
+                key = int(argv[2])
+                value = argv[3]
+                set_data(key, value)
+            except Exception:
+                help_specific('SET')
+                has_error = True
         elif operation == 'DELETE':
-            key = int(argv[2])
-            delete_data(key)
-        elif operation == 'CLEAR':
-            pass
+            try:
+                key = int(argv[2])
+                delete_data(key)
+            except Exception:
+                help_specific('DELETE')
+                has_error = True
         else:
-            print(f"Invalid command. Valid commands are {commands}")
+            print(f"[ERROR] Command {operation} not found")
+            help()
+            has_error = True
 
-    rebalance_buckets()
-    
-    save_config(config['next_bucket'], config['next_key'])
+        if operation != 'CLEAR' and not has_error:
+            rebalance_buckets()
+            save_config(config['next_bucket'], config['next_key'])
+    else:
+        help()
 
     for i in range(1, size):
         comm.send({'action': 'stop'}, dest=i)
@@ -298,7 +348,6 @@ else:
         if message['action'] == 'stop':
             break
         elif message['action'] == 'insert':
-            print(f"Inserting data {message['value']} in bucket {rank}")
             save_to_bucket(message['key'], message['value'])
         elif message['action'] == 'get':
             value = get_from_bucket(message['key'])
@@ -328,16 +377,16 @@ else:
                         file.write(line)
                     file.truncate()
                 else:
-                    print("File is empty, no line to delete")
+                    print("[REBALANCE] Bucket is empty")
 
             if last_line:
                 key, value = last_line.strip().split(':')
                 comm.send({'action': 'insert_from_siblings', 'key': key, 'value': value, 'destination': message['receiver']}, dest=message['receiver'])
+                print(f"[REBALANCE] Rebalancing data with key {key} to bucket {message['receiver']}")
 
         # Handle messages from other siblings
         if status.Get_source() != 0:
             if message['action'] == 'insert_from_siblings' and message['destination'] == rank:
-                print(f"[REBALANCE] Receiving data {message['value']} from bucket {status.Get_source()}")
                 save_to_bucket(message['key'], message['value'])
 
 comm.Barrier()

@@ -1,6 +1,7 @@
 import os
-import uuid
 import sys
+import uuid
+
 from mpi4py import MPI
 
 # Initialize MPI communication
@@ -190,6 +191,10 @@ def rebalance_buckets():
     avg_70 = round(avg_lines * 0.7)
     avg_130 = round(avg_lines * 1.3)
 
+    if total_lines < (size - 1) * 2:
+        print("[REBALANCE] Not enough data to rebalance")
+        return
+
     need_rebalance = any(lines < avg_70 or lines > avg_130 for lines in lines_map.values())
 
     if not need_rebalance:
@@ -233,7 +238,12 @@ def rebalance_buckets():
 argv = sys.argv
 
 if rank == 0:
-    commands = ['INSERT_RND', 'GET', 'FIND', 'SET', 'DELETE', 'CLEAR']
+    commands = ['INSERT', 'INSERT_RND', 'GET', 'FIND', 'SET', 'DELETE', 'CLEAR']
+
+    if len(argv) == 1:
+        print(f"Usage: {argv[0]} <command> <args>")
+        print(f"Valid commands are {commands}")
+        comm.Abort()
     
     if len(argv) > 1 and argv[1] == 'CLEAR':
         for i in range(1, size):
@@ -241,21 +251,21 @@ if rank == 0:
                 os.remove(f"bucket_{i}.txt")
         if os.path.exists("config.txt"):
             os.remove("config.txt")
-        
-    
+        print("[CLEAR] All data has been cleared")
+        comm.Abort()
+
     create_buckets()
 
     if len(argv) > 1:
         operation = argv[1]
-
-        if operation not in commands:
-            print(f"Invalid command. Valid commands are {commands}")
-            sys.exit(1)
         
         if operation == 'INSERT_RND':
             amount = int(argv[2])
             for i in range(amount):
                 insert_data(str(uuid.uuid4()))
+        elif operation == 'INSERT':
+            value = argv[2]
+            insert_data(value)
         elif operation == 'GET':
             key = int(argv[2])
             get_data(key)
@@ -269,10 +279,17 @@ if rank == 0:
         elif operation == 'DELETE':
             key = int(argv[2])
             delete_data(key)
+        elif operation == 'CLEAR':
+            pass
+        else:
+            print(f"Invalid command. Valid commands are {commands}")
 
-    # Check and rebalance buckets
     rebalance_buckets()
+    
     save_config(config['next_bucket'], config['next_key'])
+
+    for i in range(1, size):
+        comm.send({'action': 'stop'}, dest=i)
 else:
     while True:
         status = MPI.Status()

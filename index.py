@@ -235,8 +235,6 @@ def rebalance_buckets():
     for operation in operations:
         comm.send({'action': 'donate', 'receiver': operation['receiver']}, dest=operation['donor'])
 
-argv = sys.argv
-
 def help():
     print(f"""
     You can use the following commands:
@@ -263,6 +261,8 @@ def help_specific(command):
     [ERROR] Invalid command
     {help_text[command]}
     """)
+
+argv = sys.argv
 
 if rank == 0:
     commands = ['INSERT', 'INSERT_RND', 'GET', 'FIND', 'SET', 'DELETE', 'CLEAR', 'HELP']
